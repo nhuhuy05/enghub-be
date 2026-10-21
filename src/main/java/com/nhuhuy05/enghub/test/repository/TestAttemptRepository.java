@@ -1,6 +1,5 @@
 package com.nhuhuy05.enghub.test.repository;
 
-import com.nhuhuy05.enghub.common.enums.AttemptMode;
 import com.nhuhuy05.enghub.common.enums.AttemptStatus;
 import com.nhuhuy05.enghub.test.entity.TestAttempt;
 import org.springframework.data.domain.Page;
@@ -27,12 +26,5 @@ public interface TestAttemptRepository extends JpaRepository<TestAttempt, Long> 
             """)
     Page<TestAttempt> findAttempts(Long userId, AttemptStatus status, Long testId, Pageable pageable);
 
-    Optional<TestAttempt> findFirstByUserIdAndTestIdAndModeAndStatusAndSelectedPartNumbersOrderByStartedAtDesc(
-            Long userId,
-            Long testId,
-            AttemptMode mode,
-            AttemptStatus status,
-            String selectedPartNumbers
-    );
     boolean existsByTestId(Long testId);
 }

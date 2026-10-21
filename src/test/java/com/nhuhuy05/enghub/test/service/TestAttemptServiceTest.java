@@ -100,10 +100,6 @@ class TestAttemptServiceTest {
         assertThat(response.getPartNumbers()).containsExactly(1, 3);
         assertThat(response.getStatus()).isEqualTo(AttemptStatus.IN_PROGRESS);
         verify(testAttemptRepository).save(any(TestAttempt.class));
-        verify(testAttemptRepository, never())
-                .findFirstByUserIdAndTestIdAndModeAndStatusAndSelectedPartNumbersOrderByStartedAtDesc(
-                        any(), any(), any(), any(), any()
-                );
     }
 
     @Test
