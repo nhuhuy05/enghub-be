@@ -32,7 +32,12 @@ USER enghub
 # Spring Boot đọc server.port=${PORT:8080} nên sẽ tự khớp với port của Render.
 EXPOSE 8080
 
-# Cấu hình tối ưu bộ nhớ cho container (tự động cân đối theo RAM của Render, tránh bị OOM)
-ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
+# Cấu hình tối ưu bộ nhớ bắt buộc cho Render Free Tier (512MB RAM):
+# - UseSerialGC: tiết kiệm 40MB RAM so với G1GC
+# - Xmx220m: khống chế Heap tối đa 220MB
+# - MaxMetaspaceSize: khống chế Metaspace 110MB
+# - Xss256k: giảm 75% RAM của Thread stacks (mặc định 1MB/thread)
+# Tổng dung lượng JVM tối đa ~385MB, luôn nằm an toàn dưới trần 512MB của Render
+ENV JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -Xms128m -Xmx220m -XX:MaxMetaspaceSize=110m -Xss256k -XX:ReservedCodeCacheSize=40m -XX:+ExitOnOutOfMemoryError"
 
 ENTRYPOINT ["java", "-jar", "app.jar"]
