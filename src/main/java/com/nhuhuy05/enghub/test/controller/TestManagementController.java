@@ -2,6 +2,7 @@ package com.nhuhuy05.enghub.test.controller;
 
 import com.nhuhuy05.enghub.common.response.ApiResponse;
 import com.nhuhuy05.enghub.media.dto.MediaAssetResponse;
+import com.nhuhuy05.enghub.media.dto.MediaAutoLinkResponse;
 import com.nhuhuy05.enghub.media.service.MediaAssetService;
 import com.nhuhuy05.enghub.test.dto.AudioRangeResponse;
 import com.nhuhuy05.enghub.test.dto.AudioRangeUpdateRequest;
@@ -89,6 +90,15 @@ public class TestManagementController {
         String resolvedMediaType = mediaType == null ? type : mediaType;
         return ApiResponse.<MediaAssetResponse>builder()
                 .result(mediaAssetService.uploadMedia(testId, file, label, resolvedMediaType))
+                .build();
+    }
+
+    @PostMapping("/{testId}/media/auto-link")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(security = @SecurityRequirement(name = "bearerAuth"))
+    ApiResponse<MediaAutoLinkResponse> autoLinkMedia(@PathVariable Long testId) {
+        return ApiResponse.<MediaAutoLinkResponse>builder()
+                .result(mediaAssetService.autoLinkMedia(testId))
                 .build();
     }
 

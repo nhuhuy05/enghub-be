@@ -4,6 +4,7 @@ import com.nhuhuy05.enghub.reading.entity.QuestionGroupPassage;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -11,6 +12,15 @@ public interface QuestionGroupPassageRepository extends JpaRepository<QuestionGr
     Optional<QuestionGroupPassage> findByQuestionGroupIdAndOrderIndex(Long questionGroupId, Integer orderIndex);
 
     List<QuestionGroupPassage> findAllByQuestionGroupIdOrderByOrderIndexAsc(Long questionGroupId);
+
+    @Query("""
+            select qgp
+            from QuestionGroupPassage qgp
+            left join fetch qgp.mediaAsset
+            where qgp.questionGroup.id in :questionGroupIds
+            order by qgp.orderIndex asc
+            """)
+    List<QuestionGroupPassage> findAllByQuestionGroupIdInFetchMedia(Collection<Long> questionGroupIds);
 
     void deleteAllByQuestionGroupId(Long questionGroupId);
 

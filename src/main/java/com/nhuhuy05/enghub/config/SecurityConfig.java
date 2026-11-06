@@ -44,7 +44,11 @@ public class SecurityConfig {
             "/tests",
             "/tests/*",
             "/reading-lessons",
-            "/reading-lessons/*"
+            "/reading-lessons/*",
+            "/vocabulary/topics",
+            "/vocabulary/topics/*/words",
+            "/vocabulary/*",
+            "/listening/**"
     };
     private static final String[] SWAGGER_ENDPOINTS = {
             "/v3/api-docs/**",
@@ -85,7 +89,12 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration corsConfiguration = new CorsConfiguration();
 
-        corsConfiguration.setAllowedOrigins(java.util.Arrays.asList(allowedOrigins.split(",")));
+        corsConfiguration.setAllowedOrigins(
+                java.util.Arrays.stream(allowedOrigins.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .toList()
+        );
         corsConfiguration.addAllowedMethod("*");
         corsConfiguration.addAllowedHeader("*");
         corsConfiguration.setAllowCredentials(true);

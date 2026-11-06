@@ -5,13 +5,21 @@ import com.cloudinary.utils.ObjectUtils;
 import com.nhuhuy05.enghub.common.exception.AppException;
 import com.nhuhuy05.enghub.common.exception.ErrorCode;
 import com.nhuhuy05.enghub.config.CloudinaryProperties;
+import com.nhuhuy05.enghub.listening.entity.QuestionGroupAudio;
 import com.nhuhuy05.enghub.listening.repository.QuestionGroupAudioRepository;
 import com.nhuhuy05.enghub.media.dto.MediaAssetResponse;
+import com.nhuhuy05.enghub.media.dto.MediaAutoLinkResponse;
 import com.nhuhuy05.enghub.media.entity.MediaAsset;
 import com.nhuhuy05.enghub.media.repository.MediaAssetRepository;
+import com.nhuhuy05.enghub.reading.entity.QuestionGroupPassage;
 import com.nhuhuy05.enghub.reading.repository.QuestionGroupPassageRepository;
+import com.nhuhuy05.enghub.test.entity.Question;
+import com.nhuhuy05.enghub.test.entity.QuestionGroup;
+import com.nhuhuy05.enghub.test.entity.QuestionGroupImage;
 import com.nhuhuy05.enghub.test.entity.Test;
 import com.nhuhuy05.enghub.test.repository.QuestionGroupImageRepository;
+import com.nhuhuy05.enghub.test.repository.QuestionGroupRepository;
+import com.nhuhuy05.enghub.test.repository.QuestionRepository;
 import com.nhuhuy05.enghub.test.repository.TestRepository;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
@@ -22,9 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +45,8 @@ public class MediaAssetService {
     QuestionGroupImageRepository questionGroupImageRepository;
     QuestionGroupAudioRepository questionGroupAudioRepository;
     QuestionGroupPassageRepository questionGroupPassageRepository;
+    QuestionGroupRepository questionGroupRepository;
+    QuestionRepository questionRepository;
 
     @Transactional(readOnly = true)
     public List<MediaAssetResponse> getMedia(Long testId) {
@@ -80,7 +89,9 @@ public class MediaAssetService {
                 .originalFilename(file.getOriginalFilename())
                 .build();
 
-        return toResponse(mediaAssetRepository.save(mediaAsset));
+        MediaAsset saved = mediaAssetRepository.save(mediaAsset);
+        tryAutoLink(testId);
+        return toResponse(saved);
     }
 
     @Transactional
@@ -96,7 +107,9 @@ public class MediaAssetService {
         mediaAsset.setDurationMs(resolveDurationMs(uploadResult));
         mediaAsset.setOriginalFilename(file.getOriginalFilename());
 
-        return toResponse(mediaAssetRepository.save(mediaAsset));
+        MediaAsset saved = mediaAssetRepository.save(mediaAsset);
+        tryAutoLink(testId);
+        return toResponse(saved);
     }
 
     @Transactional
@@ -226,6 +239,228 @@ public class MediaAssetService {
             return "enghub";
         }
         return value.replaceAll("^/+", "").replaceAll("/+$", "");
+    }
+
+    private void tryAutoLink(Long testId) {
+        try {
+            autoLinkMedia(testId);
+        } catch (Exception exception) {
+            log.warn("Auto-linking media for testId={} skipped or encountered warning: {}", testId, exception.getMessage());
+        }
+    }
+
+    @Transactional
+    public MediaAutoLinkResponse autoLinkMedia(Long testId) {
+        testRepository.findById(testId)
+                .orElseThrow(() -> new AppException(ErrorCode.TEST_NOT_EXISTED));
+
+        List<QuestionGroup> groups = questionGroupRepository
+                .findAllByTestPartTestIdOrderByTestPartPartNumberAscOrderIndexAsc(testId);
+
+        if (groups.isEmpty()) {
+            return MediaAutoLinkResponse.builder()
+                    .linkedAudios(0)
+                    .linkedImages(0)
+                    .linkedPassages(0)
+                    .totalGroups(0)
+                    .build();
+        }
+
+        int linkedAudios = 0;
+        int linkedImages = 0;
+        int linkedPassages = 0;
+
+        for (QuestionGroup group : groups) {
+            List<Question> questions = questionRepository
+                    .findAllByQuestionGroupIdOrderByQuestionNumberAsc(group.getId());
+            if (questions.isEmpty()) {
+                continue;
+            }
+
+            int part = group.getTestPart().getPartNumber();
+            int start = questions.get(0).getQuestionNumber();
+            int end = questions.get(questions.size() - 1).getQuestionNumber();
+            List<String> baseLabels = buildGroupLabelCandidates(part, start, end, group.getOrderIndex());
+
+            // 1. Part 1, 3, 4 images (graphics)
+            if (part == 1 || part == 3 || part == 4) {
+                List<QuestionGroupImage> existingImages = questionGroupImageRepository
+                        .findAllByQuestionGroupIdOrderByOrderIndexAsc(group.getId());
+                if (existingImages.isEmpty()) {
+                    Optional<MediaAsset> image = findMedia(testId, "image", baseLabels);
+                    if (image.isPresent()) {
+                        questionGroupImageRepository.save(QuestionGroupImage.builder()
+                                .questionGroup(group)
+                                .mediaAsset(image.get())
+                                .orderIndex(0)
+                                .build());
+                        linkedImages++;
+                    }
+                }
+            }
+
+            // 2. Part 1, 2, 3, 4 audios
+            if (part >= 1 && part <= 4) {
+                Optional<QuestionGroupAudio> existingAudio = questionGroupAudioRepository
+                        .findByQuestionGroupIdAndOrderIndex(group.getId(), 0);
+                if (existingAudio.isEmpty()) {
+                    List<String> audioLabels = new ArrayList<>(baseLabels);
+                    audioLabels.add("audio_main");
+                    Optional<MediaAsset> audio = findMedia(testId, "audio", audioLabels);
+                    if (audio.isPresent()) {
+                        questionGroupAudioRepository.save(QuestionGroupAudio.builder()
+                                .questionGroup(group)
+                                .mediaAsset(audio.get())
+                                .startMs(0)
+                                .endMs(null)
+                                .orderIndex(0)
+                                .build());
+                        linkedAudios++;
+                    }
+                }
+            }
+
+            // 3. Part 6, 7 passages
+            if (part == 6 || part == 7) {
+                List<QuestionGroupPassage> existingPassages = questionGroupPassageRepository
+                        .findAllByQuestionGroupIdOrderByOrderIndexAsc(group.getId());
+
+                List<MediaAsset> pageImages = new ArrayList<>();
+                for (int page = 1; page <= 20; page++) {
+                    Optional<MediaAsset> pageImage = findPageMedia(testId, buildPageLabelCandidates(baseLabels, page));
+                    if (pageImage.isEmpty()) {
+                        break;
+                    }
+                    pageImages.add(pageImage.get());
+                }
+
+                if (pageImages.isEmpty()) {
+                    findMedia(testId, "image", baseLabels).ifPresent(pageImages::add);
+                }
+
+                if (!pageImages.isEmpty()) {
+                    if (existingPassages.isEmpty()) {
+                        for (int index = 0; index < pageImages.size(); index++) {
+                            MediaAsset image = pageImages.get(index);
+                            questionGroupPassageRepository.save(QuestionGroupPassage.builder()
+                                    .questionGroup(group)
+                                    .title(extractPassageTitle(image.getLabel()))
+                                    .passageType("image")
+                                    .contentFormat("image")
+                                    .mediaAsset(image)
+                                    .orderIndex(index)
+                                    .build());
+                            linkedPassages++;
+                        }
+                    } else {
+                        Set<Long> attachedMediaIds = existingPassages.stream()
+                                .map(QuestionGroupPassage::getMediaAsset)
+                                .filter(Objects::nonNull)
+                                .map(MediaAsset::getId)
+                                .collect(Collectors.toSet());
+
+                        int nextOrder = existingPassages.size();
+                        for (MediaAsset image : pageImages) {
+                            if (!attachedMediaIds.contains(image.getId())) {
+                                questionGroupPassageRepository.save(QuestionGroupPassage.builder()
+                                        .questionGroup(group)
+                                        .title(extractPassageTitle(image.getLabel()))
+                                        .passageType("image")
+                                        .contentFormat("image")
+                                        .mediaAsset(image)
+                                        .orderIndex(nextOrder++)
+                                        .build());
+                                linkedPassages++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return MediaAutoLinkResponse.builder()
+                .linkedAudios(linkedAudios)
+                .linkedImages(linkedImages)
+                .linkedPassages(linkedPassages)
+                .totalGroups(groups.size())
+                .build();
+    }
+
+    private List<String> buildGroupLabelCandidates(int part, int start, int end, int groupOrder) {
+        List<String> labels = new ArrayList<>();
+        labels.add(canonicalLabel(part, start, end));
+        labels.add(plainRangeLabel(start, end));
+        return labels;
+    }
+
+    private List<String> buildPageLabelCandidates(List<String> baseLabels, int page) {
+        List<String> labels = new ArrayList<>();
+        for (String baseLabel : baseLabels) {
+            labels.add(baseLabel + "-" + String.format("%02d", page));
+            labels.add(baseLabel + "-" + page);
+            labels.add(baseLabel + "(" + page + ")");
+        }
+        return labels;
+    }
+
+    private String canonicalLabel(int part, int start, int end) {
+        if (start == end) {
+            return String.format("p%02d-q%03d", part, start);
+        }
+        return String.format("p%02d-q%03d-%03d", part, start, end);
+    }
+
+    private String plainRangeLabel(int start, int end) {
+        if (start == end) {
+            return String.valueOf(start);
+        }
+        return start + "-" + end;
+    }
+
+    private Optional<MediaAsset> findMedia(Long testId, String mediaType, List<String> labels) {
+        return labels.stream()
+                .filter(label -> label != null && !label.isBlank())
+                .distinct()
+                .map(label -> mediaAssetRepository.findByTestIdAndLabelAndMediaType(testId, label, mediaType))
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+
+    private Optional<MediaAsset> findPageMedia(Long testId, List<String> labels) {
+        Optional<MediaAsset> exactMatch = findMedia(testId, "image", labels);
+        if (exactMatch.isPresent()) {
+            return exactMatch;
+        }
+
+        return labels.stream()
+                .filter(label -> label != null && !label.isBlank())
+                .map(label -> label + "_")
+                .distinct()
+                .map(prefix -> mediaAssetRepository
+                        .findFirstByTestIdAndMediaTypeAndLabelStartingWithOrderByLabelAsc(testId, "image", prefix))
+                .flatMap(Optional::stream)
+                .findFirst();
+    }
+
+    private String extractPassageTitle(String label) {
+        if (label == null || label.isBlank()) {
+            return label;
+        }
+
+        int titleStart = label.indexOf('_');
+        if (titleStart < 0 || titleStart == label.length() - 1) {
+            return label;
+        }
+
+        String title = label.substring(titleStart + 1)
+                .replace('-', ' ')
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (title.isEmpty()) {
+            return label;
+        }
+
+        return title;
     }
 
     private MediaAssetResponse toResponse(MediaAsset mediaAsset) {
