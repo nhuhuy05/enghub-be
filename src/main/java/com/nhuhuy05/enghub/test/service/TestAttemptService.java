@@ -6,6 +6,7 @@ import com.nhuhuy05.enghub.common.exception.AppException;
 import com.nhuhuy05.enghub.common.exception.ErrorCode;
 import com.nhuhuy05.enghub.listening.entity.QuestionGroupAudio;
 import com.nhuhuy05.enghub.listening.repository.QuestionGroupAudioRepository;
+import com.nhuhuy05.enghub.reading.entity.QuestionGroupPassage;
 import com.nhuhuy05.enghub.reading.repository.QuestionGroupPassageRepository;
 import com.nhuhuy05.enghub.test.dto.AttemptContentResponse;
 import com.nhuhuy05.enghub.test.dto.AttemptResponse;
@@ -15,6 +16,7 @@ import com.nhuhuy05.enghub.test.dto.UserAnswerResponse;
 import com.nhuhuy05.enghub.test.entity.Answer;
 import com.nhuhuy05.enghub.test.entity.Question;
 import com.nhuhuy05.enghub.test.entity.QuestionGroup;
+import com.nhuhuy05.enghub.test.entity.QuestionGroupImage;
 import com.nhuhuy05.enghub.test.entity.Test;
 import com.nhuhuy05.enghub.test.entity.TestAttempt;
 import com.nhuhuy05.enghub.test.entity.UserAnswer;
@@ -456,6 +458,73 @@ public class TestAttemptService {
             Map<Long, UserAnswer> answersByQuestionId
     ) {
         List<QuestionGroup> groups = questionGroupRepository.findAllByTestIdAndPartNumbersOrderByPartAndOrder(testId, partNumbers);
+        if (groups.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> groupIds = groups.stream().map(QuestionGroup::getId).toList();
+
+        // 1. Batch fetch images
+        Map<Long, List<AttemptContentResponse.Image>> imagesByGroup = questionGroupImageRepository
+                .findAllByQuestionGroupIdInFetchMedia(groupIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        img -> img.getQuestionGroup().getId(),
+                        Collectors.mapping(img -> AttemptContentResponse.Image.builder()
+                                .id(img.getId())
+                                .label(img.getMediaAsset().getLabel())
+                                .url(img.getMediaAsset().getUrl())
+                                .orderIndex(img.getOrderIndex())
+                                .build(), Collectors.toList())
+                ));
+
+        // 2. Batch fetch audios
+        Map<Long, AttemptContentResponse.Audio> audioByGroup = questionGroupAudioRepository
+                .findAllByQuestionGroupIdInFetchMedia(groupIds)
+                .stream()
+                .collect(Collectors.toMap(
+                        audio -> audio.getQuestionGroup().getId(),
+                        audio -> AttemptContentResponse.Audio.builder()
+                                .id(audio.getId())
+                                .label(audio.getMediaAsset().getLabel())
+                                .url(audio.getMediaAsset().getUrl())
+                                .startMs(audio.getStartMs())
+                                .endMs(audio.getEndMs())
+                                .build(),
+                        (a, b) -> a
+                ));
+
+        // 3. Batch fetch passages
+        Map<Long, List<AttemptContentResponse.Passage>> passagesByGroup = questionGroupPassageRepository
+                .findAllByQuestionGroupIdInFetchMedia(groupIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        p -> p.getQuestionGroup().getId(),
+                        Collectors.mapping(p -> AttemptContentResponse.Passage.builder()
+                                .id(p.getId())
+                                .label(p.getMediaAsset() == null ? null : p.getMediaAsset().getLabel())
+                                .url(p.getMediaAsset() == null ? null : p.getMediaAsset().getUrl())
+                                .title(p.getTitle())
+                                .passageType(p.getPassageType())
+                                .contentFormat(p.getContentFormat())
+                                .contentEn(p.getContentEn())
+                                .contentVi(p.getContentVi())
+                                .orderIndex(p.getOrderIndex())
+                                .build(), Collectors.toList())
+                ));
+
+        // 4. Batch fetch questions
+        List<Question> allQuestions = questionRepository.findAllByTestIdAndPartNumbersOrderByQuestionNumber(testId, partNumbers);
+        List<Long> questionIds = allQuestions.stream().map(Question::getId).toList();
+
+        // 5. Batch fetch answers
+        List<Answer> allAnswers = questionIds.isEmpty() ? List.of() : answerRepository.findAllByQuestionIdInOrderByIdAsc(questionIds);
+        Map<Long, List<Answer>> answersByQuestionIdMap = allAnswers.stream()
+                .collect(Collectors.groupingBy(a -> a.getQuestion().getId(), Collectors.toList()));
+
+        Map<Long, List<Question>> questionsByGroupId = allQuestions.stream()
+                .collect(Collectors.groupingBy(q -> q.getQuestionGroup().getId(), Collectors.toList()));
+
         Map<Integer, List<QuestionGroup>> groupsByPart = groups.stream()
                 .collect(Collectors.groupingBy(
                         group -> group.getTestPart().getPartNumber(),
@@ -468,42 +537,37 @@ public class TestAttemptService {
                         .partNumber(entry.getKey())
                         .title(entry.getValue().get(0).getTestPart().getTitle())
                         .groups(entry.getValue().stream()
-                                .map(group -> contentGroup(group, answersByQuestionId))
+                                .map(group -> AttemptContentResponse.Group.builder()
+                                        .id(group.getId())
+                                        .groupOrder(group.getOrderIndex())
+                                        .images(imagesByGroup.getOrDefault(group.getId(), List.of()))
+                                        .audio(audioByGroup.get(group.getId()))
+                                        .passages(passagesByGroup.getOrDefault(group.getId(), List.of()))
+                                        .questions(questionsByGroupId.getOrDefault(group.getId(), List.of()).stream()
+                                                .map(question -> {
+                                                    List<Answer> answers = answersByQuestionIdMap.getOrDefault(question.getId(), List.of());
+                                                    UserAnswer userAnswer = answersByQuestionId.get(question.getId());
+                                                    return AttemptContentResponse.QuestionItem.builder()
+                                                            .id(question.getId())
+                                                            .questionNumber(question.getQuestionNumber())
+                                                            .questionTextEn(question.getQuestionTextEn())
+                                                            .questionTextVi(question.getQuestionTextVi())
+                                                            .selectedAnswerId(userAnswer == null ? null : userAnswer.getSelectedAnswerId())
+                                                            .answers(answers.stream()
+                                                                    .map(answer -> AttemptContentResponse.AnswerItem.builder()
+                                                                            .id(answer.getId())
+                                                                            .label(answerLabel(answers, answer))
+                                                                            .answerTextEn(answer.getAnswerTextEn())
+                                                                            .answerTextVi(answer.getAnswerTextVi())
+                                                                            .build())
+                                                                    .toList())
+                                                            .build();
+                                                })
+                                                .toList())
+                                        .build())
                                 .toList())
                         .build())
                 .toList();
-    }
-
-    private AttemptContentResponse.Group contentGroup(QuestionGroup group, Map<Long, UserAnswer> answersByQuestionId) {
-        return AttemptContentResponse.Group.builder()
-                .id(group.getId())
-                .groupOrder(group.getOrderIndex())
-                .images(contentImages(group.getId()))
-                .audio(contentAudio(group.getId()))
-                .passages(contentPassages(group.getId()))
-                .questions(questionRepository.findAllByQuestionGroupIdOrderByQuestionNumberAsc(group.getId()).stream()
-                        .map(question -> contentQuestion(question, answersByQuestionId.get(question.getId())))
-                        .toList())
-                .build();
-    }
-
-    private AttemptContentResponse.QuestionItem contentQuestion(Question question, UserAnswer userAnswer) {
-        List<Answer> answers = answerRepository.findAllByQuestionIdOrderByIdAsc(question.getId());
-        return AttemptContentResponse.QuestionItem.builder()
-                .id(question.getId())
-                .questionNumber(question.getQuestionNumber())
-                .questionTextEn(question.getQuestionTextEn())
-                .questionTextVi(question.getQuestionTextVi())
-                .selectedAnswerId(userAnswer == null ? null : userAnswer.getSelectedAnswerId())
-                .answers(answers.stream()
-                        .map(answer -> AttemptContentResponse.AnswerItem.builder()
-                                .id(answer.getId())
-                                .label(answerLabel(answers, answer))
-                                .answerTextEn(answer.getAnswerTextEn())
-                                .answerTextVi(answer.getAnswerTextVi())
-                                .build())
-                        .toList())
-                .build();
     }
 
     private List<AttemptResultResponse.Part> resultParts(
@@ -515,6 +579,81 @@ public class TestAttemptService {
                 attempt.getTest().getId(),
                 partNumbers
         );
+        if (groups.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> groupIds = groups.stream().map(QuestionGroup::getId).toList();
+
+        // Batch fetch images
+        Map<Long, List<AttemptContentResponse.Image>> imagesByGroup = questionGroupImageRepository
+                .findAllByQuestionGroupIdInFetchMedia(groupIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        img -> img.getQuestionGroup().getId(),
+                        Collectors.mapping(img -> AttemptContentResponse.Image.builder()
+                                .id(img.getId())
+                                .label(img.getMediaAsset().getLabel())
+                                .url(img.getMediaAsset().getUrl())
+                                .orderIndex(img.getOrderIndex())
+                                .build(), Collectors.toList())
+                ));
+
+        // Batch fetch audios
+        List<QuestionGroupAudio> allAudios = questionGroupAudioRepository.findAllByQuestionGroupIdInFetchMedia(groupIds);
+        Map<Long, QuestionGroupAudio> audioEntitiesByGroup = allAudios.stream()
+                .collect(Collectors.toMap(
+                        audio -> audio.getQuestionGroup().getId(),
+                        audio -> audio,
+                        (a, b) -> a
+                ));
+        Map<Long, AttemptContentResponse.Audio> audioByGroup = allAudios.stream()
+                .collect(Collectors.toMap(
+                        audio -> audio.getQuestionGroup().getId(),
+                        audio -> AttemptContentResponse.Audio.builder()
+                                .id(audio.getId())
+                                .label(audio.getMediaAsset().getLabel())
+                                .url(audio.getMediaAsset().getUrl())
+                                .startMs(audio.getStartMs())
+                                .endMs(audio.getEndMs())
+                                .build(),
+                        (a, b) -> a
+                ));
+
+        // Batch fetch passages
+        Map<Long, List<AttemptContentResponse.Passage>> passagesByGroup = questionGroupPassageRepository
+                .findAllByQuestionGroupIdInFetchMedia(groupIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        p -> p.getQuestionGroup().getId(),
+                        Collectors.mapping(p -> AttemptContentResponse.Passage.builder()
+                                .id(p.getId())
+                                .label(p.getMediaAsset() == null ? null : p.getMediaAsset().getLabel())
+                                .url(p.getMediaAsset() == null ? null : p.getMediaAsset().getUrl())
+                                .title(p.getTitle())
+                                .passageType(p.getPassageType())
+                                .contentFormat(p.getContentFormat())
+                                .contentEn(p.getContentEn())
+                                .contentVi(p.getContentVi())
+                                .orderIndex(p.getOrderIndex())
+                                .build(), Collectors.toList())
+                ));
+
+        // Batch fetch questions
+        List<Question> allQuestions = questionRepository.findAllByTestIdAndPartNumbersOrderByQuestionNumber(
+                attempt.getTest().getId(),
+                partNumbers
+        );
+        List<Long> questionIds = allQuestions.stream().map(Question::getId).toList();
+
+        // Batch fetch answers
+        List<Answer> allAnswers = questionIds.isEmpty() ? List.of() : answerRepository.findAllByQuestionIdInOrderByIdAsc(questionIds);
+        Map<Long, List<Answer>> answersByQuestionIdMap = allAnswers.stream()
+                .collect(Collectors.groupingBy(a -> a.getQuestion().getId(), Collectors.toList()));
+
+        Map<Long, List<Question>> questionsByGroupId = allQuestions.stream()
+                .collect(Collectors.groupingBy(q -> q.getQuestionGroup().getId(), Collectors.toList()));
+
         Map<Integer, List<QuestionGroup>> groupsByPart = groups.stream()
                 .collect(Collectors.groupingBy(
                         group -> group.getTestPart().getPartNumber(),
@@ -522,98 +661,55 @@ public class TestAttemptService {
                         Collectors.toList()
                 ));
 
+        boolean isSubmitted = attempt.getStatus() == AttemptStatus.SUBMITTED;
+        boolean isPractice = attempt.getMode() == AttemptMode.PRACTICE;
+
         return groupsByPart.entrySet().stream()
                 .map(entry -> AttemptResultResponse.Part.builder()
                         .partNumber(entry.getKey())
                         .title(entry.getValue().get(0).getTestPart().getTitle())
                         .groups(entry.getValue().stream()
-                                .map(group -> resultGroup(attempt, group, answersByQuestionId))
+                                .map(group -> {
+                                    QuestionGroupAudio audioEntity = audioEntitiesByGroup.get(group.getId());
+                                    return AttemptResultResponse.Group.builder()
+                                            .id(group.getId())
+                                            .groupOrder(group.getOrderIndex())
+                                            .images(imagesByGroup.getOrDefault(group.getId(), List.of()))
+                                            .audio(audioByGroup.get(group.getId()))
+                                            .passages(passagesByGroup.getOrDefault(group.getId(), List.of()))
+                                            .transcriptEn(audioEntity == null ? null : audioEntity.getTranscriptEn())
+                                            .transcriptVi(audioEntity == null ? null : audioEntity.getTranscriptVi())
+                                            .questions(questionsByGroupId.getOrDefault(group.getId(), List.of()).stream()
+                                                    .map(question -> {
+                                                        UserAnswer userAnswer = answersByQuestionId.get(question.getId());
+                                                        boolean revealAnswer = isSubmitted || (isPractice && userAnswer != null);
+                                                        List<Answer> answers = answersByQuestionIdMap.getOrDefault(question.getId(), List.of());
+                                                        Long correctId = revealAnswer ? answers.stream().filter(Answer::isCorrect).map(Answer::getId).findFirst().orElse(null) : null;
+
+                                                        return AttemptResultResponse.QuestionResult.builder()
+                                                                .id(question.getId())
+                                                                .questionNumber(question.getQuestionNumber())
+                                                                .questionTextEn(question.getQuestionTextEn())
+                                                                .questionTextVi(question.getQuestionTextVi())
+                                                                .selectedAnswerId(userAnswer == null ? null : userAnswer.getSelectedAnswerId())
+                                                                .correctAnswerId(correctId)
+                                                                .correct(revealAnswer && userAnswer != null ? userAnswer.isCorrect() : null)
+                                                                .explanationVi(revealAnswer ? question.getExplanationVi() : null)
+                                                                .answers(answers.stream()
+                                                                        .map(answer -> AttemptResultResponse.AnswerResult.builder()
+                                                                                .id(answer.getId())
+                                                                                .label(answerLabel(answers, answer))
+                                                                                .answerTextEn(answer.getAnswerTextEn())
+                                                                                .answerTextVi(answer.getAnswerTextVi())
+                                                                                .correct(revealAnswer ? answer.isCorrect() : null)
+                                                                                .build())
+                                                                        .toList())
+                                                                .build();
+                                                    })
+                                                    .toList())
+                                            .build();
+                                })
                                 .toList())
-                        .build())
-                .toList();
-    }
-
-    private AttemptResultResponse.Group resultGroup(
-            TestAttempt attempt,
-            QuestionGroup group,
-            Map<Long, UserAnswer> answersByQuestionId
-    ) {
-        QuestionGroupAudio audio = questionGroupAudioRepository.findByQuestionGroupIdAndOrderIndex(group.getId(), 0)
-                .orElse(null);
-        return AttemptResultResponse.Group.builder()
-                .id(group.getId())
-                .groupOrder(group.getOrderIndex())
-                .images(contentImages(group.getId()))
-                .audio(contentAudio(group.getId()))
-                .passages(contentPassages(group.getId()))
-                .transcriptEn(audio == null ? null : audio.getTranscriptEn())
-                .transcriptVi(audio == null ? null : audio.getTranscriptVi())
-                .questions(questionRepository.findAllByQuestionGroupIdOrderByQuestionNumberAsc(group.getId()).stream()
-                        .map(question -> resultQuestion(attempt, question, answersByQuestionId.get(question.getId())))
-                        .toList())
-                .build();
-    }
-
-    private AttemptResultResponse.QuestionResult resultQuestion(TestAttempt attempt, Question question, UserAnswer userAnswer) {
-        boolean revealAnswer = attempt.getStatus() == AttemptStatus.SUBMITTED
-                || (attempt.getMode() == AttemptMode.PRACTICE && userAnswer != null);
-        List<Answer> answers = answerRepository.findAllByQuestionIdOrderByIdAsc(question.getId());
-        return AttemptResultResponse.QuestionResult.builder()
-                .id(question.getId())
-                .questionNumber(question.getQuestionNumber())
-                .questionTextEn(question.getQuestionTextEn())
-                .questionTextVi(question.getQuestionTextVi())
-                .selectedAnswerId(userAnswer == null ? null : userAnswer.getSelectedAnswerId())
-                .correctAnswerId(revealAnswer ? correctAnswerId(question) : null)
-                .correct(revealAnswer && userAnswer != null ? userAnswer.isCorrect() : null)
-                .explanationVi(revealAnswer ? question.getExplanationVi() : null)
-                .answers(answers.stream()
-                        .map(answer -> AttemptResultResponse.AnswerResult.builder()
-                                .id(answer.getId())
-                                .label(answerLabel(answers, answer))
-                                .answerTextEn(answer.getAnswerTextEn())
-                                .answerTextVi(answer.getAnswerTextVi())
-                                .correct(revealAnswer ? answer.isCorrect() : null)
-                                .build())
-                        .toList())
-                .build();
-    }
-
-    private List<AttemptContentResponse.Image> contentImages(Long groupId) {
-        return questionGroupImageRepository.findAllByQuestionGroupIdOrderByOrderIndexAsc(groupId).stream()
-                .map(image -> AttemptContentResponse.Image.builder()
-                        .id(image.getId())
-                        .label(image.getMediaAsset().getLabel())
-                        .url(image.getMediaAsset().getUrl())
-                        .orderIndex(image.getOrderIndex())
-                        .build())
-                .toList();
-    }
-
-    private AttemptContentResponse.Audio contentAudio(Long groupId) {
-        return questionGroupAudioRepository.findByQuestionGroupIdAndOrderIndex(groupId, 0)
-                .map(audio -> AttemptContentResponse.Audio.builder()
-                        .id(audio.getId())
-                        .label(audio.getMediaAsset().getLabel())
-                        .url(audio.getMediaAsset().getUrl())
-                        .startMs(audio.getStartMs())
-                        .endMs(audio.getEndMs())
-                        .build())
-                .orElse(null);
-    }
-
-    private List<AttemptContentResponse.Passage> contentPassages(Long groupId) {
-        return questionGroupPassageRepository.findAllByQuestionGroupIdOrderByOrderIndexAsc(groupId).stream()
-                .map(passage -> AttemptContentResponse.Passage.builder()
-                        .id(passage.getId())
-                        .label(passage.getMediaAsset() == null ? null : passage.getMediaAsset().getLabel())
-                        .url(passage.getMediaAsset() == null ? null : passage.getMediaAsset().getUrl())
-                        .title(passage.getTitle())
-                        .passageType(passage.getPassageType())
-                        .contentFormat(passage.getContentFormat())
-                        .contentEn(passage.getContentEn())
-                        .contentVi(passage.getContentVi())
-                        .orderIndex(passage.getOrderIndex())
                         .build())
                 .toList();
     }

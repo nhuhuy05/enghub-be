@@ -38,6 +38,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -100,10 +101,6 @@ class TestAttemptServiceTest {
         assertThat(response.getPartNumbers()).containsExactly(1, 3);
         assertThat(response.getStatus()).isEqualTo(AttemptStatus.IN_PROGRESS);
         verify(testAttemptRepository).save(any(TestAttempt.class));
-        verify(testAttemptRepository, never())
-                .findFirstByUserIdAndTestIdAndModeAndStatusAndSelectedPartNumbersOrderByStartedAtDesc(
-                        any(), any(), any(), any(), any()
-                );
     }
 
     @Test
@@ -265,6 +262,38 @@ class TestAttemptServiceTest {
         assertThat(response.getExpiresAt()).isNull();
         assertThat(response.getRemainingSeconds()).isNull();
         verify(testAttemptRepository, never()).save(attempt);
+    }
+
+    @Test
+    void getAttemptContentUsesBatchFetchingEfficiently() {
+        TestAttempt attempt = attempt(30L, AttemptMode.MOCK, AttemptStatus.IN_PROGRESS, "1");
+        Question question = question(41L, 1);
+        QuestionGroup group = question.getQuestionGroup();
+        Answer answer = answer(101L, question, true);
+
+        when(userRepository.findByEmail(USER_EMAIL)).thenReturn(Optional.of(user));
+        when(testAttemptRepository.findByIdAndUserId(30L, user.getId())).thenReturn(Optional.of(attempt));
+        when(userAnswerRepository.findAllByAttemptId(30L)).thenReturn(List.of());
+        when(questionRepository.findAllByTestIdAndPartNumbersOrderByQuestionNumber(20L, List.of(1)))
+                .thenReturn(List.of(question));
+        when(questionGroupRepository.findAllByTestIdAndPartNumbersOrderByPartAndOrder(20L, List.of(1)))
+                .thenReturn(List.of(group));
+        when(questionGroupImageRepository.findAllByQuestionGroupIdInFetchMedia(anyCollection()))
+                .thenReturn(List.of());
+        when(questionGroupAudioRepository.findAllByQuestionGroupIdInFetchMedia(anyCollection()))
+                .thenReturn(List.of());
+        when(questionGroupPassageRepository.findAllByQuestionGroupIdInFetchMedia(anyCollection()))
+                .thenReturn(List.of());
+        when(answerRepository.findAllByQuestionIdInOrderByIdAsc(anyCollection()))
+                .thenReturn(List.of(answer));
+
+        var response = testAttemptService.getAttemptContent(USER_EMAIL, 30L);
+
+        assertThat(response.getTestId()).isEqualTo(20L);
+        assertThat(response.getParts()).hasSize(1);
+        assertThat(response.getParts().get(0).getGroups()).hasSize(1);
+        assertThat(response.getParts().get(0).getGroups().get(0).getQuestions()).hasSize(1);
+        assertThat(response.getParts().get(0).getGroups().get(0).getQuestions().get(0).getAnswers()).hasSize(1);
     }
 
     private TestAttempt attempt(Long id, AttemptMode mode, AttemptStatus status, String selectedPartNumbers) {

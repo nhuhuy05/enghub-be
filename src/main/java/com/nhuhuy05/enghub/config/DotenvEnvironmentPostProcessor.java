@@ -26,10 +26,31 @@ public class DotenvEnvironmentPostProcessor implements EnvironmentPostProcessor,
         Map<String, Object> properties = new LinkedHashMap<>();
         dotenv.entries().forEach(entry -> properties.put(entry.getKey(), entry.getValue()));
 
+        normalizeDatasourceUrl(environment, properties);
         addRenderJdbcUrl(environment, properties);
 
         if (!properties.isEmpty()) {
             environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE_NAME, properties));
+        }
+    }
+
+    private void normalizeDatasourceUrl(ConfigurableEnvironment environment, Map<String, Object> properties) {
+        String url = environment.getProperty("SPRING_DATASOURCE_URL");
+        if (url == null) {
+            Object dotenvUrl = properties.get("SPRING_DATASOURCE_URL");
+            url = dotenvUrl != null ? dotenvUrl.toString() : null;
+        }
+
+        if (url != null) {
+            String normalized = url.trim();
+            if (normalized.startsWith("postgresql://")) {
+                normalized = "jdbc:" + normalized;
+            }
+            if ((normalized.contains("supabase.co") || normalized.contains("pooler.supabase.com"))
+                    && !normalized.contains("sslmode=")) {
+                normalized += (normalized.contains("?") ? "&" : "?") + "sslmode=require";
+            }
+            properties.put("SPRING_DATASOURCE_URL", normalized);
         }
     }
 

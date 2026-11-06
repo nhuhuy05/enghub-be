@@ -61,11 +61,8 @@ src/main/java/com/nhuhuy05/enghub
 +-- auth           # Login, token introspection, logout, invalidated tokens
 +-- common         # Shared enums, exceptions, response wrappers
 +-- config         # Security, CORS, OpenAPI, Cloudinary, Gemini, dotenv, bootstrapping
-+-- grammar        # Grammar entities and repositories
 +-- listening      # Listening dictation, group audio, transcript lines
 +-- media          # Cloudinary-backed media assets
-+-- notification   # Notification persistence model
-+-- progress       # User progress and daily streak persistence model
 +-- reading        # Part 7 reading lessons, passages, vocabulary hints
 +-- test           # TOEIC tests, parts, groups, questions, answers, attempts
 +-- user           # Users, roles, permissions, admin user management
@@ -75,10 +72,11 @@ src/main/java/com/nhuhuy05/enghub
 Additional directories:
 
 ```text
-docs/                         # Frontend integration guides
 src/main/resources/db/migration # Flyway SQL migrations
 src/test/java                 # Unit and Spring context tests
 ```
+
+Grammar, notifications, daily streaks, and aggregate skill progress have no active application workflows. Their unused Java scaffolding has been removed; historical Flyway migrations and database tables are retained. Vocabulary learning progress and review history remain active in the `vocabulary` module.
 
 ## Runtime Configuration
 
@@ -413,12 +411,7 @@ Note: the Spring context test uses the configured PostgreSQL datasource. Ensure 
 
 ## Frontend Integration Guides
 
-Detailed FE contracts are available in `docs/`:
-
-- [Admin user management](docs/admin-user-management-fe-guide.md)
-- [Listening dictation](docs/listening-dictation-fe-guide.md)
-- [Practice question AI chat streaming](docs/practice-question-chat-fe-guide.md)
-- [Reading bilingual practice](docs/reading-bilingual-fe-guide.md)
+Use the OpenAPI endpoints listed above and the frontend feature services for current API contracts. This checkout does not include a `docs/` directory of frontend integration guides.
 
 ## Security Notes
 

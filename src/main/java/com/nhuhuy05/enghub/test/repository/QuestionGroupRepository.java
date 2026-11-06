@@ -23,9 +23,10 @@ public interface QuestionGroupRepository extends JpaRepository<QuestionGroup, Lo
     @Query("""
             select qg
             from QuestionGroup qg
-            where qg.testPart.test.id = :testId
-              and qg.testPart.partNumber in :partNumbers
-            order by qg.testPart.partNumber asc, qg.orderIndex asc
+            join fetch qg.testPart tp
+            where tp.test.id = :testId
+              and tp.partNumber in :partNumbers
+            order by tp.partNumber asc, qg.orderIndex asc
             """)
     List<QuestionGroup> findAllByTestIdAndPartNumbersOrderByPartAndOrder(Long testId, List<Integer> partNumbers);
 

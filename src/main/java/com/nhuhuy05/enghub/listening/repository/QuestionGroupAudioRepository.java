@@ -4,6 +4,7 @@ import com.nhuhuy05.enghub.listening.entity.QuestionGroupAudio;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -11,6 +12,15 @@ public interface QuestionGroupAudioRepository extends JpaRepository<QuestionGrou
     Optional<QuestionGroupAudio> findByQuestionGroupIdAndOrderIndex(Long questionGroupId, Integer orderIndex);
 
     List<QuestionGroupAudio> findAllByQuestionGroupIdOrderByOrderIndexAsc(Long questionGroupId);
+
+    @Query("""
+            select qga
+            from QuestionGroupAudio qga
+            join fetch qga.mediaAsset
+            where qga.questionGroup.id in :questionGroupIds
+              and qga.orderIndex = 0
+            """)
+    List<QuestionGroupAudio> findAllByQuestionGroupIdInFetchMedia(Collection<Long> questionGroupIds);
 
     boolean existsByMediaAssetId(Long mediaAssetId);
 

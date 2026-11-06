@@ -14,8 +14,10 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     @Query("""
             select q
             from Question q
-            where q.questionGroup.testPart.test.id = :testId
-              and q.questionGroup.testPart.partNumber in :partNumbers
+            join fetch q.questionGroup qg
+            join fetch qg.testPart tp
+            where tp.test.id = :testId
+              and tp.partNumber in :partNumbers
             order by q.questionNumber asc
             """)
     List<Question> findAllByTestIdAndPartNumbersOrderByQuestionNumber(Long testId, List<Integer> partNumbers);

@@ -28,9 +28,11 @@ public class ApplicationInitConfig {
     @Bean
     ApplicationRunner applicationRunner(UserRepository userRepository){
         return args -> {
-            if (userRepository.findByEmail("admin@gmail.com").isEmpty()){
-                Role adminRole = resolveOrCreateRole(SystemRole.ADMIN);
+            Role adminRole = resolveOrCreateRole(SystemRole.ADMIN);
+            resolveOrCreateRole(SystemRole.STUDENT);
 
+            var adminOpt = userRepository.findWithRolesByEmail("admin@gmail.com");
+            if (adminOpt.isEmpty()){
                 User user = User.builder()
                         .email("admin@gmail.com")
                         .fullName("Administrator")
@@ -40,6 +42,13 @@ public class ApplicationInitConfig {
 
                 userRepository.save(user);
                 log.warn("admin user has been created with default password: admin, please change it");
+            } else {
+                User user = adminOpt.get();
+                if (user.getRoles() == null || user.getRoles().isEmpty()) {
+                    user.setRoles(Set.of(adminRole));
+                    userRepository.save(user);
+                    log.info("Assigned ADMIN role to existing admin@gmail.com");
+                }
             }
         };
     }

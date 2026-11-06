@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -13,6 +14,15 @@ public interface QuestionGroupImageRepository extends JpaRepository<QuestionGrou
     Optional<QuestionGroupImage> findByQuestionGroupIdAndOrderIndex(Long questionGroupId, Integer orderIndex);
 
     List<QuestionGroupImage> findAllByQuestionGroupIdOrderByOrderIndexAsc(Long questionGroupId);
+
+    @Query("""
+            select qgi
+            from QuestionGroupImage qgi
+            join fetch qgi.mediaAsset
+            where qgi.questionGroup.id in :questionGroupIds
+            order by qgi.orderIndex asc
+            """)
+    List<QuestionGroupImage> findAllByQuestionGroupIdInFetchMedia(Collection<Long> questionGroupIds);
 
     void deleteAllByQuestionGroupId(Long questionGroupId);
 
